@@ -10,8 +10,7 @@ create TABLE task(
     task_id SERIAL PRIMARY KEY,
     task_comment VARCHAR(255),
     is_task_done BOOLEAN,
-    task_time_start timestamp,
-    task_time_end timestamp,
+    task_date date,
     task_user_id INTEGER,
     FOREIGN KEY (task_user_id) references person(user_id)
 )
