@@ -17,24 +17,31 @@ create TABLE task(
 
 create TABLE project(
     project_id SERIAL PRIMARY KEY,
-    project_creator VARCHAR(255),
-    project_participant VARCHAR(255),
-    project_tasks VARCHAR(255),
+    project_name VARCHAR(255),
+    project_creator INTEGER,
     FOREIGN KEY (project_creator) references person(user_id)
-    FOREIGN KEY (project_participant) references person(user_id)
-    FOREIGN KEY (project_tasks) references projectTask(user_id)
+)
+
+create TABLE PersonToProject(
+    project_id INTEGER,
+    person_id INTEGER,
+    FOREIGN KEY (person_id) references person(user_id),
+	FOREIGN KEY (project_id) references project(project_id)
 )
 
 create TABLE projectTask(
     project_task_id SERIAL PRIMARY KEY,
+    project_id INTEGER,
     project_task_title VARCHAR(255),
     project_task_responsible INTEGER,
     project_task_start_time timestamp,
     project_task_end_time timestamp,
+
     project_task_comment VARCHAR(500),
     project_task_status VARCHAR(255),
     project_task_priority VARCHAR(255),
     FOREIGN KEY (project_task_responsible) references person(user_id)
+    FOREIGN KEY (project_id) references project(project_id)
 )
 
 create TABLE lists(

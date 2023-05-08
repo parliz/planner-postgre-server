@@ -41,7 +41,11 @@ class UserController {
   }
   async getUsers(req, res) {
     const allPersons = await db.query(`SELECT * FROM person`);
-    res.json(allPersons.rows);
+    let resultUsers = [];
+    allPersons.rows.map((user) => {
+      resultUsers.push({"userId": user.user_id, "userLogin": user.user_login, "userEmail": user.user_email})
+    })
+    res.json(resultUsers);
   }
   async login(req, res) {
     try {
