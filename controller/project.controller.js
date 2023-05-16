@@ -128,7 +128,7 @@ class ProjectController {
         projectId: projectInfo.rows[0].project_id,
         projectName: projectInfo.rows[0].project_name,
         projectParticipants: resultUsers,
-        projectTasks: resultTasks
+        projectTasks: resultTasks,
       };
       res.status(200).json(resProjectInfo);
     } else {
@@ -150,19 +150,19 @@ class ProjectController {
     );
     if (isGrantAccess.rows[0]) {
       try {
-        const { taskTitle, taskResponsible, taskPriority } = req.body;
+        const { taskTitle, taskResponsible, taskPriority, taskComment, taskDate, taskStatus } = req.body;
+        console.log(taskDate)
         const newTask = await db.query(
           `INSERT INTO projectTask (project_id,project_task_title,project_task_responsible,project_task_priority,project_task_status) values ($1, $2, $3, $4, $5) RETURNING *`,
-          [projectId, taskTitle, taskResponsible, taskPriority, 'InPlan']
+          [projectId, taskTitle, taskResponsible, taskPriority, taskStatus]
         );
-        if (newTask.rows[0]) {
-          res.status(200).json({ message: "Задача успешно добавлена" });
-        }
-        else {
-          res.status(500).json({ message: "Не удалось добавить задачу" });
-        }
+        const newTaskComment = await db.query(
+          `INSERT INTO TaskComment (project_task_id,project_task_comment,project_task_creation_date) values ($1, $2, $3) RETURNING *`,
+          [newTask.rows[0].project_task_id, taskComment, taskDate]
+        );
+        res.status(200).json({ message: "Задача успешно добавлена" });
       } catch {
-        res.status(404).json({ message: "Не удалось добавить задачу" });
+        res.status(500).json({ message: "Не удалось добавить задачу" });
       }
     } else {
       return res.status(403).json({ message: "Нет доступа к проекту" });
@@ -170,51 +170,185 @@ class ProjectController {
   }
   async getTaskDetail(req, res) {
     const taskId = req.params.taskId;
+    const resultComments = [];
     try {
       const taskInfo = await db.query(
         `SELECT * FROM projectTask LEFT JOIN person ON projectTask.project_task_responsible = person.user_id WHERE project_task_id = $1`,
         [taskId]
       );
+      const taskComment = await db.query(
+        `SELECT * FROM TaskComment WHERE project_task_id = $1`,
+        [taskId]
+      );
+      taskComment.rows.map((comment) => {
+        resultComments.push({
+          commentId: comment.comment_id,
+          commentText: comment.project_task_comment,
+          commentDate: comment.project_task_creation_date
+        });
+      });
       const resultTaskInfo = {
         taskId: taskInfo.rows[0].project_task_id,
-          taskTitle: taskInfo.rows[0].project_task_title,
-          taskPriority: taskInfo.rows[0].project_task_priority,
-          taskResponsible: taskInfo.rows[0].user_email,
-          taskStatus: taskInfo.rows[0].project_task_status,
-          taskPriority: taskInfo.rows[0].project_task_priority,
-      }
-        res.status(200).json(resultTaskInfo);
+        taskTitle: taskInfo.rows[0].project_task_title,
+        taskPriority: taskInfo.rows[0].project_task_priority,
+        taskResponsible: taskInfo.rows[0].user_email,
+        taskStatus: taskInfo.rows[0].project_task_status,
+        taskPriority: taskInfo.rows[0].project_task_priority,
+        taskComment: resultComments
+      };
+      res.status(200).json(resultTaskInfo);
     } catch {
       res.status(404).json({ message: "Не удалось получить данные" });
     }
   }
-  async changeTaskStatus (req, res) {
+  async changeTaskStatus(req, res) {
     const taskId = req.params.taskId;
-    const {taskStatus} = req.body;
+    const { taskStatus } = req.body;
     try {
       const taskInfo = await db.query(
         `SELECT * FROM projectTask WHERE project_task_id = $1`,
         [taskId]
       );
-      console.log(taskInfo.rows[0])
+      console.log(taskInfo.rows[0]);
       const updatedTaskInfo = await db.query(
         `UPDATE projectTask set project_id = $1, project_task_title = $2, project_task_responsible = $3, project_task_start_time = $4,
-        project_task_end_time = $5, project_task_comment = $6, project_task_status = $7, project_task_priority = $8
-          where project_task_id = $9 RETURNING *`, [
-            taskInfo.rows[0].project_id,taskInfo.rows[0].project_task_title,taskInfo.rows[0].project_task_responsible,
-            taskInfo.rows[0].project_task_start_time,taskInfo.rows[0].project_task_end_time,
-            taskInfo.rows[0].project_task_comment,taskStatus,taskInfo.rows[0].project_task_priority,
-            taskInfo.rows[0].project_task_id, 
+        project_task_end_time = $5, project_task_status = $6, project_task_priority = $7
+          where project_task_id = $8 RETURNING *`,
+        [
+          taskInfo.rows[0].project_id,
+          taskInfo.rows[0].project_task_title,
+          taskInfo.rows[0].project_task_responsible,
+          taskInfo.rows[0].project_task_start_time,
+          taskInfo.rows[0].project_task_end_time,
+          taskStatus,
+          taskInfo.rows[0].project_task_priority,
+          taskInfo.rows[0].project_task_id,
         ]
       );
-        if (updatedTaskInfo.rows[0]) {
-          res.status(200).json({ message: "Статус обновлен" });
-        } else {
-          res.status(500).json({ message: "Возникла ошибка обновления статуса" });
-        }
-        
+      console.log(updatedTaskInfo)
+      if (updatedTaskInfo.rows[0]) {
+        res.status(200).json({ message: "Статус обновлен" });
+      } else {
+        res.status(500).json({ message: "Возникла ошибка обновления статуса" });
+      }
     } catch {
       res.status(404).json({ message: "Возникла ошибка" });
+    }
+  }
+  async changeTaskPriority(req, res) {
+    const taskId = req.params.taskId;
+    const { taskPriority, taskPriorityText, taskDate } = req.body;
+    
+    const taskComment = `Статус обновлен на ${taskPriorityText}`
+    try {
+      const taskInfo = await db.query(
+        `SELECT * FROM projectTask WHERE project_task_id = $1`,
+        [taskId]
+      );
+      const updatedTaskInfo = await db.query(
+        `UPDATE projectTask set project_id = $1, project_task_title = $2, project_task_responsible = $3, project_task_start_time = $4,
+        project_task_end_time = $5, project_task_status = $6, project_task_priority = $7
+          where project_task_id = $8 RETURNING *`,
+        [
+          taskInfo.rows[0].project_id,
+          taskInfo.rows[0].project_task_title,
+          taskInfo.rows[0].project_task_responsible,
+          taskInfo.rows[0].project_task_start_time,
+          taskInfo.rows[0].project_task_end_time,
+          taskInfo.rows[0].project_task_status,
+          taskPriority,
+          taskInfo.rows[0].project_task_id,
+        ]
+      );
+      const newTaskComment = await db.query(
+        `INSERT INTO TaskComment (project_task_id,project_task_comment,project_task_creation_date) values ($1, $2, $3) RETURNING *`,
+        [taskId, taskComment, taskDate]
+      );
+      if (updatedTaskInfo.rows[0] && newTaskComment.rows[0]) {
+        res.status(200).json({ message: "Приоритет обновлен" });
+      } else {
+        res.status(500).json({ message: "Возникла ошибка обновления приоритета" });
+      }
+    } catch {
+      res.status(404).json({ message: "Возникла ошибка" });
+    }
+  }
+  async changeTaskResponsible(req, res) {
+    const taskId = req.params.taskId;
+    const { taskResponsible, taskResponsibleEmail, taskDate } = req.body;
+    
+    const taskComment = `Ответственный изменен на ${taskResponsibleEmail}`
+    try {
+      const taskInfo = await db.query(
+        `SELECT * FROM projectTask WHERE project_task_id = $1`,
+        [taskId]
+      );
+      const updatedTaskInfo = await db.query(
+        `UPDATE projectTask set project_id = $1, project_task_title = $2, project_task_responsible = $3, project_task_start_time = $4,
+        project_task_end_time = $5, project_task_status = $6, project_task_priority = $7
+          where project_task_id = $8 RETURNING *`,
+        [
+          taskInfo.rows[0].project_id,
+          taskInfo.rows[0].project_task_title,
+          taskResponsible,
+          taskInfo.rows[0].project_task_start_time,
+          taskInfo.rows[0].project_task_end_time,
+          taskInfo.rows[0].project_task_status,
+          taskInfo.rows[0].project_task_priority,
+          taskInfo.rows[0].project_task_id,
+        ]
+      );
+      const newTaskComment = await db.query(
+        `INSERT INTO TaskComment (project_task_id,project_task_comment,project_task_creation_date) values ($1, $2, $3) RETURNING *`,
+        [taskId, taskComment, taskDate]
+      );
+      if (updatedTaskInfo.rows[0] && newTaskComment.rows[0]) {
+        res.status(200).json({ message: "Приоритет обновлен" });
+      } else {
+        res.status(500).json({ message: "Возникла ошибка обновления приоритета" });
+      }
+    } catch {
+      res.status(404).json({ message: "Возникла ошибка" });
+    }
+  }
+  async getProjectParticipants(req, res) {
+    try {
+      const projectId = req.params.projectId;
+      let resultUsers = [];
+      const projectParticipants = await db.query(
+        `SELECT * FROM PersonToProject LEFT JOIN person ON PersonToProject.person_id = person.user_id WHERE project_id = $1`,
+        [projectId]
+      );
+      const projectCreator = await db.query(
+        `SELECT * FROM project LEFT JOIN person ON project.project_creator = person.user_id WHERE project_id = $1`,
+        [projectId]
+      );
+
+      resultUsers.push({
+        userId: projectCreator.rows[0].user_id,
+        userEmail: projectCreator.rows[0].user_email,
+      });
+      projectParticipants.rows.map((user) => {
+        resultUsers.push({
+          userId: user.user_id,
+          userEmail: user.user_email,
+        });
+      });
+      res.status(200).json(resultUsers);
+    } catch {
+      res.status(500).json({ message: "Возникла ошибка" });
+    }
+  }
+  async setNewTaskComment(req, res) {
+    try {
+      const { taskId, taskComment, taskDate } = req.body;
+      const newTaskComment = await db.query(
+        `INSERT INTO TaskComment (project_task_id,project_task_comment,project_task_creation_date) values ($1, $2, $3) RETURNING *`,
+        [taskId, taskComment, taskDate]
+      );
+      res.status(200).json({ message: "Комментарий добавлен" });
+    } catch {
+      res.status(500).json({ message: "Не удалось добавить комментарий" });
     }
   }
 }

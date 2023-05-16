@@ -36,29 +36,42 @@ create TABLE projectTask(
     project_task_responsible INTEGER,
     project_task_start_time timestamp,
     project_task_end_time timestamp,
-
-    project_task_comment VARCHAR(500),
     project_task_status VARCHAR(255),
     project_task_priority VARCHAR(255),
     FOREIGN KEY (project_task_responsible) references person(user_id)
     FOREIGN KEY (project_id) references project(project_id)
 )
 
-create TABLE lists(
+create TABLE TaskComment(
+	comment_id SERIAL PRIMARY KEY,
+    project_task_id INTEGER,
+    project_task_comment VARCHAR(255),
+	project_task_creation_date TIMESTAMP,
+    FOREIGN KEY (project_task_id) references projectTask(project_task_id)
+)
+
+create TABLE list(
     list_id SERIAL PRIMARY KEY,
-    list_creator VARCHAR(255),
-    list_participant VARCHAR(255),
-    list_item VARCHAR(255),
-    FOREIGN KEY (list_creator) references person(user_id)
+    list_name VARCHAR(255),
+    list_creator INTEGER,
+    list_participant INTEGER,
+    FOREIGN KEY (list_creator) references person(user_id),
     FOREIGN KEY (list_participant) references person(user_id)
-    FOREIGN KEY (list_item) references listItem(list_item_id)
+)
+
+create TABLE PersonToList(
+    list_id INTEGER,
+    person_id INTEGER,
+    FOREIGN KEY (person_id) references person(user_id),
+	FOREIGN KEY (list_id) references list(list_id)
 )
 
 create TABLE listItem(
     list_item_id SERIAL PRIMARY KEY,
+	list_id INTEGER,
     list_item_title VARCHAR(255),
     list_item_img VARCHAR(255),
     list_item_text VARCHAR(500),
     list_item_is_done BOOLEAN,
-    FOREIGN KEY (project_task_responsible) references person(user_id)
+    FOREIGN KEY (list_id) references list(list_id)
 )
