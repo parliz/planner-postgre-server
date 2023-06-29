@@ -12,9 +12,10 @@ projectRouter.put('/projectTask/:taskId', projectController.changeTaskStatus)
 projectRouter.put('/projectTaskPriority/:taskId', projectController.changeTaskPriority)
 projectRouter.put('/projectTaskResponsible/:taskId', projectController.changeTaskResponsible)
 projectRouter.get('/projectTaskParticipants/:projectId', projectController.getProjectParticipants)
+projectRouter.put('/projectParticipants/:projectId', projectController.addProjectParticipants)
+projectRouter.delete('/projectParticipants/:projectId/:userId', projectController.deleteProjectParticipants)
 projectRouter.post('/projectTaskComment', projectController.setNewTaskComment)
-
-
-// projectRouter.delete('/task/:id', projectController.deleteTask)
+projectRouter.post('/projectName/:projectId', projectController.changeProjectName)
+projectRouter.delete('/project/:projectId', projectController.deleteProject)
 
 module.exports = projectRouter

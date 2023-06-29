@@ -10,8 +10,12 @@ class ListController {
       const { listName, listParticipants } = req.body;
       if (listName) {
         const newList = await db.query(
-          `INSERT INTO list (list_name,list_creator) values ($1, $2) RETURNING *`,
-          [listName, listUserId]
+          `INSERT INTO list (list_name) values ($1) RETURNING *`,
+          [listName]
+        );
+        const ListCreator = await db.query(
+          `INSERT INTO personToList (list_id,person_id, is_person_creator) values ($1, $2, $3) RETURNING *`,
+          [newList.rows[0].list_id, listUserId, true]
         );
         console.log(newList.rows[0]);
         if (listParticipants.length > 0) {
@@ -46,22 +50,89 @@ class ListController {
       message: resMessage,
     });
   }
+  async deleteList(req, res) {
+    let resMessage = null;
+    let resStatus = null;
+    try {
+      const listId = req.params.listId;
+      console.log(req.params.listId)
+      console.log(listId)
+      if (listId) {
+        console.log(listId)
+        let deletedList = null;
+        const deletedListItems = await db.query(
+          `DELETE FROM listitem WHERE list_id=$1 RETURNING *`,
+          [listId]
+        );
+        if (deletedListItems) {
+          deletedList = await db.query(
+            `DELETE FROM list WHERE list_id=$1 RETURNING *`,
+            [listId]
+          );
+        }
+        if (deletedList) {
+          resMessage = "Удаление прошло успешно";
+          resStatus = 200;
+        }else {
+          resMessage = "Возникла ошибка при удалении";
+          resStatus = 500;
+        }
+
+      } else {
+        resMessage = "Выберите список для удаления";
+        resStatus = 400;
+      }
+    } catch (e) {
+      console.log(e);
+      resMessage = "Ошибка в удалении списка";
+      resStatus = 400;
+    }
+    res.status(resStatus).json({
+      message: resMessage,
+    });
+  }
+  async changeListName(req, res) {
+    const userId = userToken.getUserIdByToken(req);
+    const listId = req.params.listId;
+    const listName = req.body.listName;
+    
+    try {
+      const updatedListInfo = await db.query(
+        `UPDATE list set list_name = $1 where list_id = $2 RETURNING *`,
+        [
+          listName,
+          listId
+        ]
+      );
+      
+      if (updatedListInfo) {
+        res.status(200).json({ message: "Данные успешно обновлены" });
+      } else {
+        res.status(500).json({ message: "Возникла ошибка при обновлении данных" });
+      }
+    } catch {
+      res.status(404).json({ message: "Возникла ошибка" });
+    }
+  }
   async getListByUser(req, res) {
     const listUserId = userToken.getUserIdByToken(req);
     if (listUserId) {
       const allLists = await db.query(
-        `SELECT list.list_id, list.list_name FROM list LEFT JOIN personToList 
+        `SELECT list.list_id, list.list_name, personToList.person_id, personToList.is_person_creator FROM list LEFT JOIN personToList 
         on list.list_id = personToList.list_id
-        where list.list_creator = $1 or PersonToList.person_id = $1
-        group by list.list_id
+        where PersonToList.person_id = $1
+        group by list.list_id, PersonToList.person_id, personToList.is_person_creator
         order by list.list_id`,
         [listUserId]
       );
       let resultLists = [];
+      
       allLists.rows.map((list) => {
+        console.log(list.list_creator, listUserId)
         resultLists.push({
           listId: list.list_id,
           listName: list.list_name,
+          isCreator: list.is_person_creator
         });
       });
       res.status(200).json(resultLists);
@@ -69,6 +140,62 @@ class ListController {
       return res.status(403).json({
         message: "Пользователь не распознан",
       });
+    }
+  }
+  async getListSettings(req, res) {
+    console.log("controller getListSettings")
+    const userId = userToken.getUserIdByToken(req);
+    const listId = req.params.listId;
+    let resultUsers = [];
+    let resultAllUsers = [];
+    let participantIdList = [];
+    console.log(listId)
+    try {
+      const listCreator = await db.query(
+            `SELECT * FROM personToList where list_id = $1 AND is_person_creator = true`, [listId]
+          );
+      console.log(listCreator.rows[0].person_id === userId)
+      if (listCreator.rows[0].person_id === userId) {
+        const listParticipants = await db.query(
+          `SELECT person.user_id, person.user_login, person.user_email FROM personToList LEFT JOIN person 
+          on person.user_id = personToList.person_id
+          where personToList.list_id = $1 AND personToList.person_id<> $2`,
+          [listId, userId]
+        );
+        listParticipants.rows.map((user) => {
+          resultUsers.push({
+            userId: user.user_id,
+            userEmail: user.user_email,
+            userLogin: user.user_login
+          });
+          participantIdList.push(user.user_id)
+        });
+        const allUsers = await db.query(
+          `SELECT user_id, user_login, user_email FROM person where user_id!= $1;`,
+          [userId]
+        );
+
+        for (var user of allUsers.rows)
+        {
+          if (!participantIdList.includes(user.user_id)) {
+            resultAllUsers.push({
+              userId: user.user_id,
+              userEmail: user.user_email,
+              userLogin: user.user_login
+            });
+          }
+        }
+
+        res.status(200).json({participants: resultUsers, allUsers: resultAllUsers});
+      } else {
+        return res.status(403).json({
+          message: "Вы не можете редактировать данный список",
+        });
+      }
+    } catch {
+      return res.status(400).json({
+            message: "Возникла ошибка",
+          });
     }
   }
   async getListItems(req, res) {
@@ -79,12 +206,15 @@ class ListController {
       const isGrantAccess = await db.query(
         `SELECT COUNT(*) FROM list LEFT JOIN personToList 
         on list.list_id = personToList.list_id
-        where (list.list_creator = $1 or personToList.person_id = $1) and list.list_id = $2
+        where (personToList.is_person_creator = true or personToList.person_id = $1) and list.list_id = $2
         group by list.list_id`, [userId, listId]
       );
       if (isGrantAccess) {
         const allListItems = await db.query(
           `SELECT *FROM listitem where list_id = $1`, [listId]
+        );
+        const listTitle = await db.query(
+          `SELECT list_name FROM list where list_id = $1`, [listId]
         );
         allListItems.rows.map((item) => {
           resultListItems.push({
@@ -95,93 +225,51 @@ class ListController {
             isListItemDone: item.list_item_is_done,
           });
         });
-        res.status(200).json(resultListItems);
+        res.status(200).json({listTitle: listTitle.rows[0].list_name, listItems: resultListItems});
       } else {
         res.status(401).json({ message: "нет доступа к списку"});
       }
     } catch {
       res.status(500).json({ message: "Ошибка"});
     }
-    
-    // const listItemId = req.params.listId;
-    // const isGrantAccess = await db.query(
-    //   `SELECT COUNT(*) FROM list LEFT JOIN personToList
-    //   on list.list_id = personToList.list_id
-    //   where (list.list_creator = $1 or PersonToList.person_id = $1) and List.List_id = $2
-    //   group by list.list_id`,
 
-    //   [userId, listId]
-    // );
-    // if (isGrantAccess.rows[0]) {
-    //   const resultUsers = [];
-    //   const resultTasks = [];
-    //   const ListInfo = await db.query(
-    //     `SELECT * FROM List
-    //     where List_id = $1`,
-    //     [ListId]
-    //   );
-    //   const ListParticipants = await db.query(
-    //     `SELECT * FROM PersonToList LEFT JOIN person ON PersonToList.person_id = person.user_id WHERE List_id = $1`,
-    //     [ListId]
-    //   );
-    //   const ListCreator = await db.query(
-    //     `SELECT * FROM List LEFT JOIN person ON List.List_creator = person.user_id WHERE List_id = $1`,
-    //     [ListId]
-    //   );
 
-    //   resultUsers.push({
-    //     userId: ListCreator.rows[0].user_id,
-    //     userEmail: ListCreator.rows[0].user_email,
-    //   });
-    //   ListParticipants.rows.map((user) => {
-    //     resultUsers.push({
-    //       userId: user.user_id,
-    //       userEmail: user.user_email,
-    //     });
-    //   });
-
-    //   const ListTasks = await db.query(
-    //     `SELECT * FROM Listtask WHERE List_id = $1`,
-    //     [ListId]
-    //   );
-    //   ListTasks.rows.map((task) => {
-    //     resultTasks.push({
-    //       taskId: task.List_task_id,
-    //       taskTitle: task.List_task_title,
-    //       taskPriority: task.List_task_priority,
-    //       taskResponsible: task.List_task_responsible,
-    //       taskStatus: task.List_task_status,
-    //       taskPriority: task.List_task_priority,
-    //     });
-    //   });
-    //   const resListInfo = {
-    //     ListId: ListInfo.rows[0].List_id,
-    //     ListName: ListInfo.rows[0].List_name,
-    //     ListParticipants: resultUsers,
-    //     ListTasks: resultTasks,
-    //   };
-    //   res.status(200).json(resListInfo);
-    // } else {
-    //   res.status(403).json({
-    //     message: "нет доступа к проекту",
-    //   });
-    // }
+  }
+  async getListItem(req, res) {
+    const listId = req.params.listId;
+    let resultItemInfo = [];
+    try {
+      const itemInfo = await db.query(
+        `SELECT * FROM listitem 
+        where list_item_id = $1`, [listId]
+      );
+          resultItemInfo = {
+            listItemId: itemInfo.rows[0].list_item_id,
+            listItemTitle: itemInfo.rows[0].list_item_title,
+            listItemImg: itemInfo.rows[0].list_item_img,
+            listItemText: itemInfo.rows[0].list_item_text,
+            isListItemDone: itemInfo.rows[0].list_item_is_done,
+          }
+        res.status(200).json(resultItemInfo);
+    } catch {
+      res.status(500).json({ message: "Ошибка"});
+    }
   }
   async createListItem(req, res) {
     const userId = userToken.getUserIdByToken(req);
-    const { listId, listItemTitle, listItemText } = req.body;
+    const { listId, listItemTitle, listItemImg, listItemText } = req.body;
     const isGrantAccess = await db.query(
       `SELECT COUNT(*) FROM list LEFT JOIN personToList 
       on list.list_id = personToList.list_id
-      where (list.list_creator = $1 or personToList.person_id = $1) and list.list_id = $2
+      where (personToList.is_person_creator = true or personToList.person_id = $1) and list.list_id = $2
       group by list.list_id`, [userId, listId]
     );
     console.log(isGrantAccess.rows[0]);
     if (isGrantAccess.rows[0]) {
       try {
         const newTask = await db.query(
-          `INSERT INTO listItem (list_id,list_item_title,list_item_text) values ($1, $2, $3) RETURNING *`,
-          [listId, listItemTitle, listItemText]
+          `INSERT INTO listItem (list_id,list_item_title,list_item_img,list_item_text,list_item_is_done) values ($1, $2, $3, $4, $5) RETURNING *`,
+          [listId, listItemTitle, listItemImg, listItemText, false]
         );
         console.log(newTask.rows[0]);
         res.status(200).json({ message: "Успешно создано" });
@@ -225,32 +313,30 @@ class ListController {
       res.status(404).json({ message: "Не удалось получить данные" });
     }
   }
-  async changeTaskStatus(req, res) {
-    const taskId = req.params.taskId;
-    const { taskStatus } = req.body;
+  async changeListItemDone(req, res) {
+    console.log("controller changeListItemDone")
+    const listItemId = req.params.listItemId;
+    const isItemDone = req.body;
+    console.log(isItemDone)
     try {
-      const taskInfo = await db.query(
-        `SELECT * FROM ListTask WHERE List_task_id = $1`,
-        [taskId]
+      const listItem = await db.query(
+        `SELECT * FROM listItem WHERE list_item_id = $1`,
+        [listItemId]
       );
-      console.log(taskInfo.rows[0]);
-      const updatedTaskInfo = await db.query(
-        `UPDATE ListTask set List_id = $1, List_task_title = $2, List_task_responsible = $3, List_task_start_time = $4,
-        List_task_end_time = $5, List_task_comment = $6, List_task_status = $7, List_task_priority = $8
-          where List_task_id = $9 RETURNING *`,
+      console.log(listItem.rows[0]);
+      const updatedListItemInfo = await db.query(
+        `UPDATE listItem set list_id = $1, list_item_title = $2, list_item_img = $3, list_item_text = $4,
+        list_item_is_done = $5 where list_item_id = $6 RETURNING *`,
         [
-          taskInfo.rows[0].List_id,
-          taskInfo.rows[0].List_task_title,
-          taskInfo.rows[0].List_task_responsible,
-          taskInfo.rows[0].List_task_start_time,
-          taskInfo.rows[0].List_task_end_time,
-          taskInfo.rows[0].List_task_comment,
-          taskStatus,
-          taskInfo.rows[0].List_task_priority,
-          taskInfo.rows[0].List_task_id,
+          listItem.rows[0].list_id,
+          listItem.rows[0].list_item_title,
+          listItem.rows[0].list_item_img,
+          listItem.rows[0].list_item_text,
+          isItemDone.isItemDone,
+          listItem.rows[0].list_item_id
         ]
       );
-      if (updatedTaskInfo.rows[0]) {
+      if (updatedListItemInfo.rows[0]) {
         res.status(200).json({ message: "Статус обновлен" });
       } else {
         res.status(500).json({ message: "Возникла ошибка обновления статуса" });
@@ -259,30 +345,229 @@ class ListController {
       res.status(404).json({ message: "Возникла ошибка" });
     }
   }
-  async getListParticipants(req, res) {
+  async changeListItem(req, res) {
+    const listItemId = req.params.listItemId;
+    const {listId, listItemImg, listItemText, listItemTitle, isListItemDone} = req.body;
     try {
-      const ListId = req.params.ListId;
+      const changeedListItem = await db.query(
+        `UPDATE listitem set list_id = $1, list_item_title = $2, list_item_img = $3, list_item_text = $4,
+        list_item_is_done = $5 where list_item_id = $6 RETURNING *`,
+        [
+          listId,
+          listItemTitle,
+          listItemImg,
+          listItemText,
+          isListItemDone,
+          listItemId
+        ]);
+        if (changeedListItem) {
+          res.status(200).json({ message: "Обновление прошло успешно" });
+        } else {
+          res.status(500).json({ message: "Возникла ошибка при обновлении" });
+        }
+    } catch {
+      res.status(500).json({ message: "Возникла ошибка" });
+    }
+  }
+  async deleteListItem (req, res) {
+    const listItemId = req.params.listItemId;
+    const deletedListItem = await db.query(
+      `DELETE from listItem where list_item_id = $1 RETURNING *`,
+      [listItemId]
+    );
+    if (deletedListItem.rows[0]) {
+      res.status(200).json({ message: "Элемент списка успешно удален" });
+    } else {
+      res.status(500).json({ message: "Возникла ошибка при удалении" });
+    }
+  }
+  async getListParticipants(req, res) {
+    const userId = userToken.getUserIdByToken(req);
+    const listId = req.params.ListId;
+    try {
+      let participants = [];
       let resultUsers = [];
       const ListParticipants = await db.query(
-        `SELECT * FROM PersonToList LEFT JOIN person ON PersonToList.person_id = person.user_id WHERE List_id = $1`,
-        [ListId]
+        `SELECT * FROM PersonToList LEFT JOIN person ON PersonToList.person_id = person.user_id WHERE list_id = $1`,
+        [req.params.listId]
       );
-      const ListCreator = await db.query(
-        `SELECT * FROM List LEFT JOIN person ON List.List_creator = person.user_id WHERE List_id = $1`,
-        [ListId]
-      );
-
-      resultUsers.push({
-        userId: ListCreator.rows[0].user_id,
-        userEmail: ListCreator.rows[0].user_email,
-      });
       ListParticipants.rows.map((user) => {
-        resultUsers.push({
+        participants.push({
           userId: user.user_id,
-          userEmail: user.user_email,
+          userLogin: user.user_login,
         });
       });
-      res.status(200).json(resultUsers);
+
+      const users = await db.query(
+        `SELECT user_id, user_login
+        FROM person 
+        WHERE NOT EXISTS (
+            SELECT 1 
+            FROM persontolist 
+            WHERE person.user_id = persontolist.person_id  
+            AND list_id = $1
+        );`,
+        [req.params.listId]
+      );
+      users.rows.map((user) => {
+        resultUsers.push({
+          userId: user.user_id,
+          userLogin: user.user_login
+        });
+      });
+
+      const ListCreator = await db.query(
+        `SELECT user_id, user_login FROM PersonToList LEFT JOIN person ON PersonToList.person_id = person.user_id 
+            WHERE list_id = $1 AND is_person_creator = true`,
+        [req.params.listId]
+      );
+      const resCreator ={
+        userId: ListCreator.rows[0].user_id,
+        userLogin: ListCreator.rows[0].user_login,
+        isUserCreator: userId === ListCreator.rows[0].user_id
+      };
+
+      res.status(200).json({participants: participants, users: resultUsers, creator: resCreator});
+    } catch {
+      res.status(500).json({ message: "Возникла ошибка" });
+    }
+  }
+  async addListParticipants(req, res) {
+    try {
+      const listId = req.params.listId;
+      const userId = req.body.userId;
+
+      const listParticipants = await db.query(
+        `INSERT INTO personToList (list_id,person_id,is_person_creator) values ($1, $2, $3) RETURNING *`,
+        [listId, userId, false]
+      );
+        if (listParticipants) {
+          res.status(200).json({ message: "Участник успешно добавлен" });
+        } else {
+          res.status(500).json({ message: "Ошибка при добавлении учасника" });
+        }
+      
+    } catch {
+      res.status(500).json({ message: "Возникла ошибка" });
+    }
+  }
+  async deleteListParticipants(req, res) {
+    try {
+      const listId = req.params.listId;
+      const userId = req.params.userId;
+
+      const listParticipants = await db.query(
+        `DELETE FROM persontolist WHERE list_id=$1 AND person_id=$2 RETURNING *`,
+        [listId, userId]
+      );
+        if (listParticipants.rows[0]) {
+          res.status(200).json({ message: "Участник успешно удален" });
+        } else {
+          res.status(500).json({ message: "Ошибка при удалении учасника" });
+        }
+      
+    } catch {
+      res.status(500).json({ message: "Возникла ошибка" });
+    }
+  }
+  async copyList(req, res) {
+    console.log("copyList")
+    try {
+      const listId = req.params.listId;
+      const userId = userToken.getUserIdByToken(req);
+
+      const listInfo = await db.query(
+        `SELECT * FROM list where list_id = $1`,
+        [listId]
+      );
+      const copyList = await db.query(
+        `INSERT INTO list (list_name) values ($1) RETURNING *`,
+        [listInfo.rows[0].list_name]
+      );
+
+      const copyPersonToList = await db.query(
+        `INSERT INTO personToList (list_id,person_id,is_person_creator) values ($1, $2, $3) RETURNING *`,
+        [copyList.rows[0].list_id, userId, true]
+      );
+
+      const listItemInfo = await db.query(
+        `SELECT * FROM listitem where list_id = $1`,
+        [listId]
+      );
+      
+      if (listItemInfo) {
+        listItemInfo.rows.map(async (item) => {
+          const copyListItem = await db.query(
+            `INSERT INTO listitem (list_id,list_item_title,list_item_img,list_item_text,list_item_is_done) values ($1, $2, $3, $4, $5) RETURNING *`,
+            [copyList.rows[0].list_id, item.list_item_title, item.list_item_img, item.list_item_text, item.list_item_is_done]
+          );
+        });
+        res.status(200).json({ message: "Список скопирован" });
+      } else if (copyPersonToList) {
+        res.status(200).json({ message: "Список скопирован" });
+      }
+
+        // if (copyList) {
+        //   res.status(200).json({ message: "Список скопирован" });
+        // } else {
+        //   res.status(500).json({ message: "Ошибка при копировании" });
+        // }
+      
+    } catch {
+      res.status(500).json({ message: "Возникла ошибка" });
+    }
+  }
+  async getCopyLists(req, res) {
+    const listUserId = userToken.getUserIdByToken(req);
+    if (listUserId) {
+      const allLists = await db.query(
+        `SELECT list.list_id, list.list_name, personToList.person_id FROM list LEFT JOIN personToList 
+        on list.list_id = personToList.list_id
+        where PersonToList.person_id = $1 AND personToList.is_person_creator = true
+        group by list.list_id, PersonToList.person_id, personToList.is_person_creator
+        order by list.list_id`,
+        [listUserId]
+      );
+      let resultLists = [];
+      
+      allLists.rows.map((list) => {
+        console.log(list.list_creator, listUserId)
+        resultLists.push({
+          listId: list.list_id,
+          listName: list.list_name
+        });
+      });
+      res.status(200).json(resultLists);
+    } else {
+      return res.status(403).json({
+        message: "Пользователь не распознан",
+      });
+    }
+  }
+  async copyListItem(req, res) {
+    const listId = req.params.listId;
+    const listItemId = req.body.listItemId;
+    try {
+      const copiedListItem = await db.query(
+        `SELECT * FROM listitem where list_item_id = $1`,
+        [
+          listItemId
+        ]);
+        const copyItem = await db.query(
+          `INSERT INTO listItem (list_id,list_item_title,list_item_img,list_item_text,list_item_is_done) values ($1, $2, $3, $4, $5) RETURNING *`,
+          [
+            listId, 
+            copiedListItem.rows[0].list_item_title, 
+            copiedListItem.rows[0].list_item_img, 
+            copiedListItem.rows[0].list_item_text, 
+            false
+          ]
+        );
+        if (copyItem.rows[0]) {
+          res.status(200).json({ message: "Копирование прошло успешно" });
+        } else {
+          res.status(500).json({ message: "Возникла ошибка при копировании" });
+        }
     } catch {
       res.status(500).json({ message: "Возникла ошибка" });
     }

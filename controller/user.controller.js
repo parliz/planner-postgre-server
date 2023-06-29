@@ -25,7 +25,7 @@ class UserController {
           resMessage = "Пользователь успешно зарегистрирован";
           resStatus = 200;
         } else {
-          resMessage = "Пожалуйста, попробуйте снова";
+          resMessage = "Пожалуйста, попробуйте снова. Логин и почта должны быть уникальными";
           resStatus = 500;
         }
       } else {
@@ -40,7 +40,8 @@ class UserController {
     res.status(resStatus).json({ message: resMessage });
   }
   async getUsers(req, res) {
-    const allPersons = await db.query(`SELECT * FROM person`);
+    const userId = userToken.getUserIdByToken(req); 
+    const allPersons = await db.query(`SELECT * FROM person WHERE user_id<>$1`, [userId]);
     let resultUsers = [];
     allPersons.rows.map((user) => {
       resultUsers.push({"userId": user.user_id, "userLogin": user.user_login, "userEmail": user.user_email})
@@ -92,14 +93,24 @@ class UserController {
     }
   }
   async updateUser(req, res) {
-    0;
-    const { user_id, user_login, user_name, user_email, user_password_hash } =
-      req.body;
-    const allPersons = await db.query(
-      `UPDATE person set user_login = $1, user_name = $2, user_email = $3, user_password_hash = $4 where user_id = $5 RETURNING *`,
-      [user_login, user_name, user_email, user_password_hash, user_id]
-    );
-    res.json(allPersons.rows[0]);
+    console.log("update user")
+    const userId = userToken.getUserIdByToken(req);   
+    const { userEmail, userLanguage } = req.body;
+    try {
+      const personInfo = await db.query(
+        `SELECT * from person where user_id = $1`,[userId]);
+      console.log(personInfo.rows[0])
+      const allPersons = await db.query(
+        `UPDATE person set user_login = $1, user_email = $2, user_password_hash = $3, user_language = $4 where user_id = $5 RETURNING *`,
+        [personInfo.rows[0].user_login, userEmail, personInfo.rows[0].user_password_hash, userLanguage, userId]
+      );
+      res.json(allPersons.rows[0]);
+    }
+    catch {
+      res.status(500).json({message: "Возникла ошибка"})
+    }
+
+    
   }
   async deleteUser(req, res) {
     const person_id = req.params.id;
